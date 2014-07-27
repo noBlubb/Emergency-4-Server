@@ -4,6 +4,9 @@ import struct
 UDP_SERVER_RESPONSE = "\x80"
 UDP_CLIENT_REQUEST = "\x00"
 UDP_DEBUGR_RESPONSE = "game_mode=3;inet=1;maxpl=4;nation=de;numpl=1;password=0;players=\xA7(10)\x1BnoBlubb\x1C\xA7(-1)\x1B;run=1;server_addr=127.0.0.1;server_name=Blubberium (noBlubb);server_port=58282;vmaj=1;vmin=1;vtype=f"
+UDP_DEBUGR_REQUEST = "game=EM4;lang=de;mod={0:s}"
+
+CFG_MASTER_SERVER_IP = '84.201.2.89'
 
 """
 len     type            val
@@ -37,11 +40,30 @@ def HELPER_dataStringToDictionary(dataIn):
 class CommunityServer():
     def __init__(self):
         self.games = []
-    #Byte 3 should be mode \x00, ignore. Byte 4 should be content-len, ignore
+    #byte 3 should be mode \x00, ignore? byte 4 should be content-len, ignore?
+    def checkMasterServerUpdate(self):
+        return true
+    
+    def performMasterServerUpdate(self, modname=''):
+        request = UDP_DEBUGR_REQUEST.format(modname)
+        requestlen = struct.pack('B', len(request))
+        self.transport.write("\x13\x37\x00"+requestlen+request, (CFG_MASTER_SERVER_IP, 54321))
+    
+    def receiveMasterServerUpdate(self, request):
+        pass #process data here
+
     def processUDP(self, data):
         session = data[:2]  
+        mode = data[3]
         request = data[4:]
         print request
+        if mode == UDP_SERVER_RESPONSE:
+            return #u what mate
+        else: #master response should not trigger update call
+            if self.checkMasterServerUpdate():
+                self.performMasterServerUpdate()
+
+        
         response = UDP_DEBUGR_RESPONSE
         responselen = struct.pack('B', len(response))
         return session + UDP_SERVER_RESPONSE + responselen + response
@@ -60,9 +82,15 @@ class UDPFactory(protocol.DatagramProtocol):
         self.server = master
     def doStart(self):
         pass
+
     def datagramReceived(self, data, address):
+        if address[0] is CFG_MASTER_SERVER_IP:
+            self.receiveMasterServerUpdate()
+            return
+
         response = self.server.processUDP(data)
-        self.transport.write(response, address)
+        if not response is None:
+            self.transport.write(response, address)
 
 
 def main():
