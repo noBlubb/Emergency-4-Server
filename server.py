@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from twisted.internet import reactor, protocol
 import struct
 
@@ -61,21 +62,41 @@ class CommunityServer():
             return #u what mate
         else: #master response should not trigger update call
             if self.checkMasterServerUpdate():
-                self.performMasterServerUpdate()
-
-        
+                self.performMasterServerUpdate()       
         response = UDP_DEBUGR_RESPONSE
         responselen = struct.pack('B', len(response))
         return session + UDP_SERVER_RESPONSE + responselen + response
 
+    def processTCP(self, data):
+        packet = data[:4]
+        unknown = data[4:4]
+        #length = int(data[8:4].reverse(), 16)
+        request = data[12:]
+        print data
+
 class TCPFactory(protocol.Protocol):   
     def __init__(self, master):
         self.server = master
+
     def doStart(self):
         pass
+
     def dataReceived(self, data):
-        self.transport.write(data)
-        print data
+        response = self.server.processTCP(data)
+        if not response is None:
+            self.transport.write(response)
+        #verify data first then cancel kickCall
+        self.kickCall.cancel()
+
+    def connectionMade(self):
+        self.kickCall = reactor.callLater(5, self.autoKick)
+
+    def autoKick(self):
+        self.transport.loseConnection()
+
+    def connectionLost(self, reason):
+        pass
+
 
 class UDPFactory(protocol.DatagramProtocol):
     def __init__(self, master):
