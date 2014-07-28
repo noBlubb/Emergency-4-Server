@@ -24,6 +24,12 @@ def HELPER_buildNameString(playerList):
     elif len(playerList) > 2:
         return "\xA7(10)\x1B{0:s}\x1C\xA7(-1)\x1B, ".format(playerList[0]) + ', '.join(playerList[1:4])
 
+def HELPER_fetchNameString(playerString):
+    players = []
+    for player in playerString.split(', '):
+        players.append(player.replace("\xA7(10)\x1B","").replace("\x1C\xA7(-1)\x1B","").strip())
+    return players
+
 def HELPER_dictionaryToDataString(dataIn):
     conversion = ''
     for x,y in dataIn:
@@ -33,17 +39,24 @@ def HELPER_dictionaryToDataString(dataIn):
 def HELPER_dataStringToDictionary(dataIn):
     conversion = {}
     for x in dataIn.split(';'):
-        x,y = x.split('=')
-        if len(x) > 0:
-            conversion[x] = y
+        y,z = x.split('=')
+        if len(y) > 0:
+            conversion[y] = z
     return conversion
+
+
+
+class MultiplayerSession():
+    def __init__(self, data):
+        for x,y in data:
+            setattr(self, x, y)
 
 class CommunityServer():
     def __init__(self):
-        self.games = []
+        self.sessions = []
     #byte 3 should be mode \x00, ignore? byte 4 should be content-len, ignore?
     def checkMasterServerUpdate(self):
-        return true
+        return True
     
     def performMasterServerUpdate(self, modname=''):
         request = UDP_DEBUGR_REQUEST.format(modname)
@@ -53,11 +66,20 @@ class CommunityServer():
     def receiveMasterServerUpdate(self, request):
         pass #process data here
 
+    def startSession(self, data):
+        newGame = MultiplayerSession(data)
+        self.sessions[data['server_addr']] = newGame
+        return newGame
+
+    def endSession(self, session):
+        self.sessions.pop(session.ip, None)
+
     def processUDP(self, data):
         session = data[:2]  
         mode = data[3]
+        length = int(data[4].encode('hex'), 16)
         request = data[4:]
-        print request
+        print 'UDP', request
         if mode == UDP_SERVER_RESPONSE:
             return #u what mate
         else: #master response should not trigger update call
@@ -68,56 +90,69 @@ class CommunityServer():
         return session + UDP_SERVER_RESPONSE + responselen + response
 
     def processTCP(self, data):
-        packet = data[:4]
-        unknown = data[4:4]
-        #length = int(data[8:4].reverse(), 16)
-        request = data[12:]
-        print data
+        packet = int(data[:4].encode('hex'), 16)
+        #unknown = data[4:8]
+        length = int(data[8:12:-1].encode('hex'), 16) #little edian (wtf!)
+        request = data[12:12+length]
+        print 'TCP', request
+        return packet, length, request
 
-class TCPFactory(protocol.Protocol):   
-    def __init__(self, master):
-        self.server = master
+class TCPComProtocol(protocol.Protocol):   
+    def __init__(self):
+        self.session = None
 
     def doStart(self):
         pass
 
     def dataReceived(self, data):
-        response = self.server.processTCP(data)
-        if not response is None:
-            self.transport.write(response)
-        #verify data first then cancel kickCall
-        self.kickCall.cancel()
+        print self.transport.getPeer()
+        packet, length, request_raw = self.factory.master.processTCP(data)
+        request = dataStringToDictionary(request_raw)
+        if 'players' in request:
+            request['players'] = HELPER_fetchNameString(request['players'])
+        if not self.session is None:
+            self.session = self.factory.master.startSession(request)
+        else: #update?
+            for x,y in request:
+                setattr(self.session, x, y)
+        if not self.kickCall is None:
+            self.kickCall.cancel()
+            self.kickCall = None
 
     def connectionMade(self):
         self.kickCall = reactor.callLater(5, self.autoKick)
 
     def autoKick(self):
+        if not self.session is None:
+            if self.factory.master.endSession(self.session):
+                self.session = None
+                self.isHost = False
         self.transport.loseConnection()
 
     def connectionLost(self, reason):
-        pass
+        if not self.session is None:
+            self.factory.master.endSession(self.session)
 
-
-class UDPFactory(protocol.DatagramProtocol):
+class UDPComProtocol(protocol.DatagramProtocol):
     def __init__(self, master):
         self.server = master
     def doStart(self):
         pass
-
     def datagramReceived(self, data, address):
         if address[0] is CFG_MASTER_SERVER_IP:
-            self.receiveMasterServerUpdate()
+            self.receiveMasterServerUpdate(data)
             return
-
         response = self.server.processUDP(data)
         if not response is None:
             self.transport.write(response, address)
 
-
 def main():
     masterserver = CommunityServer()
-    #reactor.listenTCP(54321,TCPFactory(masterserver))
-    reactor.listenUDP(54321,UDPFactory(masterserver))
+    factory = protocol.ServerFactory()
+    factory.protocol = TCPComProtocol
+    factory.master = masterserver
+    reactor.listenTCP(54321, factory)
+    reactor.listenUDP(54321, UDPComProtocol(masterserver))
     reactor.run()
 
 if __name__ == '__main__':
