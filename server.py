@@ -45,15 +45,21 @@ def HELPER_dataStringToDictionary(dataIn):
     return conversion
 
 
-
 class MultiplayerSession():
     def __init__(self, data):
-        for x,y in data:
+        for x,y in data.iteritems():
             setattr(self, x, y)
+
+    def getAsGameString(self):
+        temp_dict = {}
+        for x in dir(self).remove('__doc__').remove('__module__'):
+            temp_dict[x] = getattr(self, x)
+        temp_dict['players'] = HELPER_buildNameString(temp_dict['players']) 
+        return HELPER_dictionaryToDataString(temp_dict)
 
 class CommunityServer():
     def __init__(self):
-        self.sessions = []
+        self.sessions = {}
     #byte 3 should be mode \x00, ignore? byte 4 should be content-len, ignore?
     def checkMasterServerUpdate(self):
         return True
@@ -81,21 +87,27 @@ class CommunityServer():
         session = data[:2]  
         mode = data[3]
         length = int(data[4].encode('hex'), 16)
-        request = data[4:]
+        request = HELPER_dataStringToDictionary(data[4:])
+
         print 'UDP', request
         #if mode == UDP_SERVER_RESPONSE:
         #    return #u what mate
         #else: #master response should not trigger update call
         #    if self.checkMasterServerUpdate():
         #        self.performMasterServerUpdate()       
-        response = UDP_DEBUGR_RESPONSE
-        responselen = struct.pack('B', len(response))
-        return session + UDP_SERVER_RESPONSE + responselen + response
+        #response = UDP_DEBUGR_RESPONSE
+        if not 'mod' in request:
+            request['mod'] = ''
+
+        for x,y in self.sessions[request['mod']].iteritems():
+            response = y.getAsGameString()
+            responselen = struct.pack('B', len(response))
+            yield session + UDP_SERVER_RESPONSE + responselen + response
 
     def processTCP(self, data):
         packet = int(data[:4].encode('hex'), 16)
         #unknown = data[4:8]
-        length = int(data[8:12:-1].encode('hex'), 16) #little edian (wtf!)
+        length = int(data[8:12][::-1].encode('hex'), 16) #little edian (wtf!)
         request = data[12:12+length]
         print 'TCP', request
         return packet, length, request
@@ -108,16 +120,16 @@ class TCPComProtocol(protocol.Protocol):
         pass
 
     def dataReceived(self, data):
-        print self.transport.getPeer()
         packet, length, request_raw = self.factory.master.processTCP(data)
-        request = dataStringToDictionary(request_raw)
+        request = HELPER_dataStringToDictionary(request_raw) 
         if 'players' in request:
             request['players'] = HELPER_fetchNameString(request['players'])
-
-        if not self.session is None:
+        request['server_addr'] = self.transport.getPeer().host
+        print request
+        if self.session is None:
             self.session = self.factory.master.startSession(request)
         else: #update?
-            for x,y in request:
+            for x,y in request.iteritems():
                 setattr(self.session, x, y)
         if not self.kickCall is None:
             self.kickCall.cancel()
@@ -146,8 +158,7 @@ class UDPComProtocol(protocol.DatagramProtocol):
         #if address[0] is CFG_MASTER_SERVER_IP:
         #    self.receiveMasterServerUpdate(data)
         #    return
-        response = self.server.processUDP(data)
-        if not response is None:
+        for response in self.server.processUDP(data):
             self.transport.write(response, address)
 
 def main():
