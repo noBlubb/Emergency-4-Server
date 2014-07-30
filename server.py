@@ -66,13 +66,16 @@ class CommunityServer():
     def receiveMasterServerUpdate(self, request):
         pass #process data here
 
-    def startSession(self, data):
+    def startSession(self, data, modname=''):
         newGame = MultiplayerSession(data)
-        self.sessions[data['server_addr']] = newGame
+        newGame.mod = modname #omit me maybe
+        if not modname in self.sessions:
+            self.sessions[modname] = {}
+        self.sessions[modname][data['server_addr']] = newGame
         return newGame
 
     def endSession(self, session):
-        self.sessions.pop(session.ip, None)
+        self.sessions[session.mod].pop(session.server_addr, None)
 
     def processUDP(self, data):
         session = data[:2]  
@@ -80,11 +83,11 @@ class CommunityServer():
         length = int(data[4].encode('hex'), 16)
         request = data[4:]
         print 'UDP', request
-        if mode == UDP_SERVER_RESPONSE:
-            return #u what mate
-        else: #master response should not trigger update call
-            if self.checkMasterServerUpdate():
-                self.performMasterServerUpdate()       
+        #if mode == UDP_SERVER_RESPONSE:
+        #    return #u what mate
+        #else: #master response should not trigger update call
+        #    if self.checkMasterServerUpdate():
+        #        self.performMasterServerUpdate()       
         response = UDP_DEBUGR_RESPONSE
         responselen = struct.pack('B', len(response))
         return session + UDP_SERVER_RESPONSE + responselen + response
@@ -110,6 +113,7 @@ class TCPComProtocol(protocol.Protocol):
         request = dataStringToDictionary(request_raw)
         if 'players' in request:
             request['players'] = HELPER_fetchNameString(request['players'])
+
         if not self.session is None:
             self.session = self.factory.master.startSession(request)
         else: #update?
@@ -139,9 +143,9 @@ class UDPComProtocol(protocol.DatagramProtocol):
     def doStart(self):
         pass
     def datagramReceived(self, data, address):
-        if address[0] is CFG_MASTER_SERVER_IP:
-            self.receiveMasterServerUpdate(data)
-            return
+        #if address[0] is CFG_MASTER_SERVER_IP:
+        #    self.receiveMasterServerUpdate(data)
+        #    return
         response = self.server.processUDP(data)
         if not response is None:
             self.transport.write(response, address)
