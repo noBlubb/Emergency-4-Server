@@ -74,7 +74,6 @@ class CommunityServer():
 
     def startSession(self, data, modname=''):
         newGame = MultiplayerSession(data)
-        newGame.mod = modname #omit me maybe
         if not modname in self.sessions:
             self.sessions[modname] = {}
         self.sessions[modname][data['server_addr']] = newGame
@@ -82,6 +81,7 @@ class CommunityServer():
 
     def endSession(self, session):
         self.sessions[session.mod].pop(session.server_addr, None)
+        return True
 
     def processUDP(self, data):
         session = data[:2]  
@@ -131,6 +131,7 @@ class TCPComProtocol(protocol.Protocol):
         else: #update?
             for x,y in request.iteritems():
                 setattr(self.session, x, y)
+            self.factory.master.sessions[self.session.mod][self.session.server_addr] = self.session
         if not self.kickCall is None:
             self.kickCall.cancel()
             self.kickCall = None
@@ -142,7 +143,6 @@ class TCPComProtocol(protocol.Protocol):
         if not self.session is None:
             if self.factory.master.endSession(self.session):
                 self.session = None
-                self.isHost = False
         self.transport.loseConnection()
 
     def connectionLost(self, reason):
